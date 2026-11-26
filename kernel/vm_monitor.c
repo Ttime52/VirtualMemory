@@ -24,7 +24,7 @@ static int __init vm_monitor_init(void)
     unsigned long long total_bytes = 0;
     unsigned long minor_faults;
     unsigned long major_faults;
-    unsigned int seq;
+
 
     if (pid <= 0) {
         pr_err("vm_monitor: please provide a valid PID\n");
@@ -65,9 +65,7 @@ static int __init vm_monitor_init(void)
      */
     rcu_read_lock();
 
-    do {
-        seq = read_seqbegin(&task->signal->stats_lock);
-
+    scoped_seqlock_read (&task->signal->stats_lock, ss_lock_irqsave) {
         minor_faults = READ_ONCE(task->signal->min_flt);
         major_faults = READ_ONCE(task->signal->maj_flt);
 
@@ -75,8 +73,7 @@ static int __init vm_monitor_init(void)
             minor_faults += READ_ONCE(thread->min_flt);
             major_faults += READ_ONCE(thread->maj_flt);
         }
-
-    } while (read_seqretry(&task->signal->stats_lock, seq));
+    }
 
     rcu_read_unlock();
 
