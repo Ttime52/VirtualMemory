@@ -1,0 +1,51 @@
+# Linux Kernel Module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.cmd
+*.o.d
+Module.symvers
+modules.order
+.tmp_versions/
+
+# Build directories
+build/
+dist/
+out/
+
+# Kernel source (local copy)
+/linux/
+/linux-*/
+*.tar.xz
+*.tar.gz
+
+# Test executables
+/tests/test_vma
+/tests/test_minor
+/tests/test_major
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.bak
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
