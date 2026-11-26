@@ -5,6 +5,8 @@
 #include <linux/sched.h>
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
+#include <linux/sched/signal.h>
+#include <linux/rcupdate.h>
 
 static int pid = -1;
 
@@ -14,11 +16,15 @@ MODULE_PARM_DESC(pid, "PID of the process to monitor");
 static int __init vm_monitor_init(void)
 {
     struct pid *pid_struct;
+    struct task_struct *thread;
     struct task_struct *task;
     struct mm_struct *mm;
     struct vm_area_struct *vma;
     unsigned long region_count = 0;
     unsigned long long total_bytes = 0;
+    unsigned long minor_faults;
+    unsigned long major_faults;
+    unsigned int seq;
 
     if (pid <= 0) {
         pr_err("vm_monitor: please provide a valid PID\n");
@@ -52,6 +58,27 @@ static int __init vm_monitor_init(void)
      * เพื่อไม่ให้ข้อมูลเปลี่ยนระหว่างที่เรานับ
      */
     mmap_read_lock(mm);
+    /*
+     * รวม page faults ของ process:
+     * - ค่าที่เก็บไว้สำหรับ threads ที่จบแล้ว
+     * - ค่าจาก threads ที่ยังอยู่ใน thread group
+     */
+    rcu_read_lock();
+
+    do {
+        seq = read_seqbegin(&task->signal->stats_lock);
+
+        minor_faults = READ_ONCE(task->signal->min_flt);
+        major_faults = READ_ONCE(task->signal->maj_flt);
+
+        for_each_thread(task, thread) {
+            minor_faults += READ_ONCE(thread->min_flt);
+            major_faults += READ_ONCE(thread->maj_flt);
+        }
+
+    } while (read_seqretry(&task->signal->stats_lock, seq));
+
+    rcu_read_unlock();
 
     {
         VMA_ITERATOR(vmi, mm, 0);
@@ -70,11 +97,10 @@ static int __init vm_monitor_init(void)
             region_count);
     pr_info("vm_monitor: total virtual address space = %llu bytes\n",
             total_bytes);
-    pr_info("vm_monitor: thread minor page faults = %lu\n",
-            READ_ONCE(task->min_flt));
-    pr_info("vm_monitor: thread major page faults = %lu\n",
-            READ_ONCE(task->maj_flt));
-
+    pr_info("vm_monitor: process minor page faults = %lu\n",
+            minor_faults);
+    pr_info("vm_monitor: process major page faults = %lu\n",
+            major_faults);
     mmput(mm);
     put_task_struct(task);
 
