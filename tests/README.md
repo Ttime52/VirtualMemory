@@ -136,8 +136,8 @@ On x86_64, `/proc/<pid>/maps` commonly includes a special `[vsyscall]` line at a
 
 Static checks run in Windows Git Bash on 2026-11-27:
 
-- `bash -n scripts/vm_monitor.sh` and `bash -n tests/test_cli.sh` — passed.
-- `bash tests/test_cli.sh` — passed help, missing PID, malformed/zero/negative/fractional/out-of-range PID, extra-argument, and invocation-from-another-directory checks.
+- `bash -n scripts/vm_monitor.sh`, `bash -n scripts/vm_monitor_log.sh`, and `bash -n tests/test_cli.sh` — passed.
+- `bash tests/test_cli.sh` - passed help (including from another directory) and argument checks, plus parser fixtures with timestamps in both prefix orders, an extra module-verification diagnostic, missing/duplicate/malformed fields, a mismatched PID, and mixed stale/current target records.
 - The valid-PID privilege check was skipped because this was not a non-root Linux shell. No kernel module was loaded.
 
 Linux module integration is **Pending** Ubuntu VMware verification. In Ubuntu, run:
@@ -145,6 +145,7 @@ Linux module integration is **Pending** Ubuntu VMware verification. In Ubuntu, r
 ```sh
 make -C kernel
 bash -n scripts/vm_monitor.sh
+bash -n scripts/vm_monitor_log.sh
 bash -n tests/test_cli.sh
 chmod +x scripts/vm_monitor.sh
 ./scripts/vm_monitor.sh --help
@@ -173,7 +174,8 @@ fi
 kill "$PID"
 ```
 
-Compare a snapshot taken while the target is stable. `/proc/<pid>/stat` fields 10 and 12 are cumulative minor and major faults; VMA counts can differ by the x86_64 `[vsyscall]` pseudo-mapping. The Linux integration scenarios (module insertion/removal, actual `/proc` comparisons, loaded-module preservation, locking, and interrupted cleanup) were not executed in this Windows session and must be verified in the VM.
+Compare a snapshot taken while the target is stable. `/proc/<pid>/stat` fields 10 and 12 are cumulative minor and major faults; VMA counts can differ by the x86_64 `[vsyscall]` pseudo-mapping.
+Parser fixtures exercise the same normalization and validation functions used by the CLI, but do not run `dmesg` or load a module. The Linux integration scenarios (module insertion/removal, actual `/proc` comparisons, loaded-module preservation, locking, and interrupted cleanup) remain pending Ubuntu VMware verification.
 
 ## CLI wrapper
 

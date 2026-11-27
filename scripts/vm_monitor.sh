@@ -82,6 +82,12 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || \
 repo_root=$(cd -- "$script_dir/.." && pwd -P) || \
     error 1 "could not resolve the repository directory."
 module_path="$repo_root/kernel/vm_monitor.ko"
+log_parser="$script_dir/vm_monitor_log.sh"
+
+if [[ ! -f $log_parser ]]; then
+    error 1 "kernel-log parser not found: $log_parser."
+fi
+source "$log_parser" || error 1 "could not load the kernel-log parser."
 
 if [[ ! -f $module_path ]]; then
     printf 'Error: kernel module not found: %s\n' "$module_path" >&2
@@ -173,7 +179,7 @@ show_module_log()
 
 normalize_log()
 {
-    sed -E 's/^<[0-9]+>//' "$kernel_log" >"$normalized_log"
+    vm_monitor_normalize_log "$kernel_log" "$normalized_log"
 }
 
 check_for_signal()
@@ -187,7 +193,7 @@ check_for_signal()
 printf 'Capturing a kernel-log boundary and starting the snapshot for PID %s...\n' "$pid"
 # --follow-new starts at the current end of the kernel log, so older records
 # cannot be mistaken for this invocation's output. Never clear the system log.
-dmesg --follow-new --raw >"$kernel_log" 2>"$dmesg_error" &
+dmesg --follow-new --raw --notime >"$kernel_log" 2>"$dmesg_error" &
 log_reader_pid=$!
 sleep 0.1
 check_for_signal
@@ -242,11 +248,7 @@ fi
 log_has_snapshot_fields()
 {
     normalize_log || return 1
-    grep -Fq "vm_monitor: target PID = $pid, process name = " "$normalized_log" &&
-        grep -Fq 'vm_monitor: number of memory regions = ' "$normalized_log" &&
-        grep -Fq 'vm_monitor: total virtual address space = ' "$normalized_log" &&
-        grep -Fq 'vm_monitor: process minor page faults = ' "$normalized_log" &&
-        grep -Fq 'vm_monitor: process major page faults = ' "$normalized_log"
+    vm_monitor_parse_snapshot "$normalized_log" "$pid"
 }
 
 snapshot_found=0
@@ -280,60 +282,20 @@ if ! normalize_log; then
     error 1 "could not parse the captured kernel log."
 fi
 
-target_prefix="vm_monitor: target PID = $pid, process name = "
-target_line_count=0
-all_target_line_count=0
-module_line_count=0
-process_name=""
-while IFS= read -r line || [[ -n $line ]]; do
-    [[ $line == vm_monitor:* ]] || continue
-    module_line_count=$((module_line_count + 1))
-    if [[ $line == 'vm_monitor: target PID = '* ]]; then
-        all_target_line_count=$((all_target_line_count + 1))
-        if [[ $line == "$target_prefix"* ]]; then
-            target_line_count=$((target_line_count + 1))
-            process_name=${line#"$target_prefix"}
-        fi
-    fi
-done <"$normalized_log"
-
-if (( module_line_count != 5 || all_target_line_count != 1 || target_line_count != 1 )); then
+if ! vm_monitor_parse_snapshot "$normalized_log" "$pid"; then
     printf 'Error: kernel log output is incomplete or ambiguous for PID %s.\n' "$pid" >&2
-    show_module_log >&2
-    error 1 "expected one target record and exactly four metric records."
-fi
-
-parse_numeric_field()
-{
-    local field_prefix=$1
-    local variable_name=$2
-    local count=0
-    local value=""
-    local line
-
-    while IFS= read -r line || [[ -n $line ]]; do
-        if [[ $line == "$field_prefix"* ]]; then
-            count=$((count + 1))
-            value=${line#"$field_prefix"}
-        fi
-    done <"$normalized_log"
-
-    if (( count != 1 )) || [[ ! $value =~ ^[0-9]+$ ]]; then
-        printf 'Error: missing, duplicate, or malformed kernel statistic: %s\n' \
-            "${field_prefix#vm_monitor: }" >&2
-        return 1
+    if [[ -n $VM_PARSE_ERROR ]]; then
+        printf 'Detail: %s.\n' "$VM_PARSE_ERROR" >&2
     fi
-
-    printf -v "$variable_name" '%s' "$value"
-}
-
-if ! parse_numeric_field 'vm_monitor: number of memory regions = ' region_count ||
-    ! parse_numeric_field 'vm_monitor: total virtual address space = ' virtual_bytes_raw ||
-    ! parse_numeric_field 'vm_monitor: process minor page faults = ' minor_faults ||
-    ! parse_numeric_field 'vm_monitor: process major page faults = ' major_faults; then
     show_module_log >&2
     error 1 "the kernel snapshot could not be validated."
 fi
+
+process_name=$VM_PROCESS_NAME
+region_count=$VM_REGION_COUNT
+virtual_bytes_raw=$VM_VIRTUAL_BYTES
+minor_faults=$VM_MINOR_FAULTS
+major_faults=$VM_MAJOR_FAULTS
 
 if ! kib=$(awk -v bytes="$virtual_bytes_raw" 'BEGIN { printf "%.2f", bytes / 1024 }') ||
     ! mib=$(awk -v bytes="$virtual_bytes_raw" 'BEGIN { printf "%.2f", bytes / 1048576 }'); then
