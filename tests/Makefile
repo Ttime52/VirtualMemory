@@ -2,8 +2,9 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -Wpedantic -std=c11
 
 PROGRAMS := test_vma test_minor test_major
+BASH ?= bash
 
-.PHONY: all clean
+.PHONY: all clean check-cli
 
 all: $(PROGRAMS)
 
@@ -12,3 +13,6 @@ all: $(PROGRAMS)
 
 clean:
 	rm -f $(PROGRAMS)
+
+check-cli:
+	$(BASH) test_cli.sh
