@@ -69,7 +69,7 @@ make -C kernel clean
 
 ## CLI Usage
 
-Run this on Linux. You need Bash, `insmod`, `rmmod`, `dmesg` with `--follow-new` support, `flock`, GCC, GNU Make, and headers for the running kernel. The wrapper needs root because it loads the kernel module and reads the kernel log. It is not intended to run directly on Windows.
+Run this on Linux. You need Bash, `insmod`, `rmmod`, `dmesg` with `--follow-new` support, `flock`, `setsid`, `readlink`, `wc`, GCC, GNU Make, and headers for the running kernel. The wrapper needs root because it loads the kernel module and reads the kernel log. It is not intended to run directly on Windows.
 
 Build the module and request a snapshot:
 
@@ -103,6 +103,6 @@ Status: Completed successfully
 ========================================
 ```
 
-The wrapper validates the PID, resolves the module relative to its own location, rejects a module that is already loaded, and reports useful errors for invalid input, missing module files, insertion failures, incomplete logs, and cleanup failures. It captures only new kernel-log records; it never clears the system log. A lock serializes wrapper instances, but does not coordinate with manual `insmod` or `rmmod` commands. The wrapper unloads only a module it successfully loaded and uses traps for best-effort cleanup after interruption or later errors. It does not use forced removal.
+The wrapper validates the PID, resolves the module relative to its own location, rejects a module that is already loaded, and reports useful errors for invalid input, missing module files, insertion failures, incomplete logs, and cleanup failures. It waits for `dmesg` to open the kernel log and consume a unique boundary marker written to `/dev/kmsg` before inserting the module. This adds one small marker record per run; the wrapper never clears the system log. A lock serializes wrapper instances, but does not coordinate with manual `insmod` or `rmmod` commands. The wrapper unloads only a module it successfully loaded and uses traps for best-effort cleanup after interruption or later errors. It does not use forced removal.
 
 All reported values come from the kernel module. The address size is shown in bytes and binary KiB/MiB. Page-fault counters are cumulative process totals at the module initialization snapshot, not faults caused only by the CLI. A process can change while it is being inspected; use a stable target for comparisons. See [tests/README.md](tests/README.md) for workload and `/proc` verification instructions.

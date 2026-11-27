@@ -121,7 +121,7 @@ make -C kernel
 sudo env VM_SAFETY_ACK=YES sh tests/safety_test.sh kernel/vm_monitor.ko
 ```
 
-The script requires an explicit disposable-VM acknowledgement, verifies a valid PID load, five load/unload cycles, rejection of missing or invalid PID values, and that rejected loads do not leave the module present in `/sys/module`. It refuses to run if the module is already loaded or the module's `vermagic` does not match the running kernel. Review recent `vm_monitor:` messages with `sudo dmesg | tail -n 100`; do not clear the kernel log.
+The script requires an explicit disposable-VM acknowledgement, verifies a valid PID load, five load/unload cycles, rejection of missing or invalid PID values, and that rejected loads do not leave the module present in `/sys/module`. It refuses to run if the module is already loaded or the module's `vermagic` does not match the running kernel. A failed `insmod` does not establish ownership; if the module is present after a failed load, the script reports the unexpected state and leaves it untouched. Review recent `vm_monitor:` messages with `sudo dmesg | tail -n 100`; do not clear the kernel log.
 
 On x86_64, `/proc/<pid>/maps` commonly includes a special `[vsyscall]` line at a fixed high address. It is a legacy special mapping and should be treated separately from ordinary VMAs when comparing counts or address-space totals. In particular, do not assume that a line count from `maps`, an `mm` VMA count, and a module's chosen virtual-size definition include this special region in the same way.
 
@@ -137,7 +137,7 @@ On x86_64, `/proc/<pid>/maps` commonly includes a special `[vsyscall]` line at a
 Static checks run in Windows Git Bash on 2026-11-27:
 
 - `bash -n scripts/vm_monitor.sh`, `bash -n scripts/vm_monitor_log.sh`, and `bash -n tests/test_cli.sh` — passed.
-- `bash tests/test_cli.sh` - passed help (including from another directory) and argument checks, plus parser fixtures with timestamps in both prefix orders, an extra module-verification diagnostic, missing/duplicate/malformed fields, a mismatched PID, and mixed stale/current target records.
+- `bash tests/test_cli.sh` - passed help (including from another directory) and argument checks, plus a complete module-output fixture that reaches the success summary, timestamps in both prefix orders, an extra module-verification diagnostic, missing/duplicate/malformed fields, a mismatched PID, and mixed stale/current target records.
 - The valid-PID privilege check was skipped because this was not a non-root Linux shell. No kernel module was loaded.
 
 Linux module integration is **Pending** Ubuntu VMware verification. In Ubuntu, run:
@@ -175,7 +175,7 @@ kill "$PID"
 ```
 
 Compare a snapshot taken while the target is stable. `/proc/<pid>/stat` fields 10 and 12 are cumulative minor and major faults; VMA counts can differ by the x86_64 `[vsyscall]` pseudo-mapping.
-Parser fixtures exercise the same normalization and validation functions used by the CLI, but do not run `dmesg` or load a module. The Linux integration scenarios (module insertion/removal, actual `/proc` comparisons, loaded-module preservation, locking, and interrupted cleanup) remain pending Ubuntu VMware verification.
+Parser and formatting fixtures exercise the same functions used by the CLI, but do not run `dmesg` or load a module. Reader-startup/boundary behavior, failed-insertion log draining, signal cleanup, module insertion/removal, actual `/proc` comparisons, loaded-module preservation, and locking remain pending Ubuntu VMware verification.
 
 ## CLI wrapper
 
@@ -186,7 +186,7 @@ make -C kernel
 sudo ./scripts/vm_monitor.sh 24097
 ```
 
-The wrapper resolves `kernel/vm_monitor.ko` relative to the repository, validates the PID and module kernel version, and requires root. It captures only new kernel-log records for its own module load, prints a formatted snapshot, and unloads the module only when this invocation loaded it. It refuses to run if `vm_monitor` is already loaded. A lock prevents two wrapper invocations from overlapping; manual `insmod` and `rmmod` commands do not use that lock. The wrapper does not clear the kernel log and does not read statistics from `/proc`.
+The wrapper resolves `kernel/vm_monitor.ko` relative to the repository, validates the PID and module kernel version, and requires root. It waits for the `dmesg` reader to open the kernel log and echo a unique boundary marker written to `/dev/kmsg` before inserting the module; this adds one small marker record per run. After a failed insertion, it allows the reader to drain and prints both `insmod` and current kernel-log diagnostics. `setsid` keeps the insertion process running through Ctrl+C so the wrapper can record whether it succeeded, return the signal status, and clean up a module it owns. It refuses to run if `vm_monitor` is already loaded. A lock prevents two wrapper invocations from overlapping; manual `insmod` and `rmmod` commands do not use that lock. The wrapper does not clear the kernel log and does not read statistics from `/proc`.
 
 To run the non-destructive argument and help checks without loading a kernel module:
 

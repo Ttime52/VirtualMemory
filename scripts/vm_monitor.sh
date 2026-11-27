@@ -71,7 +71,7 @@ if (( EUID != 0 )); then
     error 77 "root privileges are required; run with sudo."
 fi
 
-for command_name in insmod rmmod dmesg flock grep sed awk mktemp sleep; do
+for command_name in insmod rmmod dmesg flock grep sed awk mktemp sleep readlink wc setsid; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         error 1 "required command not found: $command_name."
     fi
@@ -126,6 +126,7 @@ tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/vm_monitor.XXXXXXXX") || \
 kernel_log="$tmp_dir/kernel.log"
 normalized_log="$tmp_dir/kernel.normalized.log"
 dmesg_error="$tmp_dir/dmesg.err"
+boundary_error="$tmp_dir/boundary.err"
 insmod_error="$tmp_dir/insmod.err"
 rmmod_error="$tmp_dir/rmmod.err"
 log_reader_pid=""
@@ -160,7 +161,7 @@ cleanup()
     fi
 
     rm -f -- "$kernel_log" "$normalized_log" "$dmesg_error" \
-        "$insmod_error" "$rmmod_error" 2>/dev/null || status=1
+        "$boundary_error" "$insmod_error" "$rmmod_error" 2>/dev/null || status=1
     rmdir -- "$tmp_dir" 2>/dev/null || status=1
     exit "$status"
 }
@@ -182,6 +183,94 @@ normalize_log()
     vm_monitor_normalize_log "$kernel_log" "$normalized_log"
 }
 
+log_reader_is_running()
+{
+    local stat_line stat_rest state
+
+    [[ -n $log_reader_pid && -r /proc/$log_reader_pid/stat ]] || return 1
+    IFS= read -r stat_line <"/proc/$log_reader_pid/stat" || return 1
+    stat_rest=${stat_line#*) }
+    state=${stat_rest%% *}
+    [[ $state != Z && $state != X ]]
+}
+
+log_reader_has_kernel_fd()
+{
+    local fd fd_target
+
+    for fd in "/proc/$log_reader_pid/fd/"*; do
+        [[ -e $fd ]] || continue
+        fd_target=$(readlink -- "$fd" 2>/dev/null || true)
+        if [[ $fd_target == /dev/kmsg || $fd_target == /proc/kmsg ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+wait_for_log_reader()
+{
+    local attempt
+
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        check_for_signal
+        [[ ! -s $dmesg_error ]] || return 1
+        log_reader_is_running || return 1
+        log_reader_has_kernel_fd && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+establish_log_boundary()
+{
+    local attempt marker_attempt
+
+    # Seeing the marker in the follower proves it has opened the kernel log
+    # and is consuming new records. Retry with fresh tokens if startup races
+    # the first write; do not insert the module until one marker is observed.
+    for ((marker_attempt = 0; marker_attempt < 5; marker_attempt++)); do
+        check_for_signal
+        boundary_marker="vm_monitor_cli_boundary: pid=$pid token=$$-$RANDOM-$RANDOM"
+        if ! { printf '<6>%s\n' "$boundary_marker" > /dev/kmsg; } 2>"$boundary_error"; then
+            return 2
+        fi
+
+        for ((attempt = 0; attempt < 10; attempt++)); do
+            check_for_signal
+            normalize_log || return 1
+            grep -Fq -- "$boundary_marker" "$normalized_log" && return 0
+            [[ ! -s $dmesg_error ]] || return 1
+            log_reader_is_running || return 1
+            sleep 0.1
+        done
+    done
+    return 1
+}
+
+drain_log_reader()
+{
+    local attempt previous_size="" current_size stable_reads=0
+
+    # insmod returns after module_init has logged its error, but dmesg may not
+    # have copied those records into the redirected file yet. Wait for a short
+    # quiet period before stopping the reader, with a bounded timeout.
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        [[ ! -s $dmesg_error ]] || break
+        log_reader_is_running || break
+        current_size=$(wc -c <"$kernel_log" 2>/dev/null) || break
+        current_size=${current_size//[[:space:]]/}
+        if [[ $current_size == "$previous_size" ]]; then
+            stable_reads=$((stable_reads + 1))
+        else
+            stable_reads=0
+        fi
+        (( stable_reads >= 2 )) && break
+        previous_size=$current_size
+        sleep 0.1
+    done
+}
+
 check_for_signal()
 {
     if (( signal_status != 0 )); then
@@ -191,29 +280,42 @@ check_for_signal()
 }
 
 printf 'Capturing a kernel-log boundary and starting the snapshot for PID %s...\n' "$pid"
-# --follow-new starts at the current end of the kernel log, so older records
-# cannot be mistaken for this invocation's output. Never clear the system log.
+# --follow-new starts at the current end of the kernel log. Confirm the reader
+# has opened the kernel log and can receive a unique marker before insmod; a
+# fixed startup sleep alone cannot establish that boundary. Never clear logs.
 dmesg --follow-new --raw --notime >"$kernel_log" 2>"$dmesg_error" &
 log_reader_pid=$!
-sleep 0.1
-check_for_signal
-
-if ! kill -0 "$log_reader_pid" 2>/dev/null || [[ -s $dmesg_error ]]; then
+if ! wait_for_log_reader; then
     stop_log_reader
-    printf 'Error: cannot follow new kernel log messages.\n' >&2
+    printf 'Error: kernel-log reader did not become ready.\n' >&2
     if [[ -s $dmesg_error ]]; then
         cat "$dmesg_error" >&2
     fi
-    error 1 "check dmesg permissions and /dev/kmsg availability."
+    error 1 "check dmesg permissions, /dev/kmsg availability, and /proc access."
 fi
 
-# Keep the signal handler non-terminating around insmod. If Ctrl+C arrives
-# while insertion is in progress, wait for insmod's result so ownership can be
-# recorded before the EXIT cleanup runs.
-if insmod "$module_path" "pid=$pid" 2>"$insmod_error"; then
+# Wait until a unique kernel-log marker is actually consumed. This confirms
+# the follow-new reader's boundary before the module can emit its snapshot.
+if ! establish_log_boundary; then
+    stop_log_reader
+    printf 'Error: could not confirm the kernel-log boundary.\n' >&2
+    if [[ -s $dmesg_error ]]; then
+        cat "$dmesg_error" >&2
+    fi
+    if [[ -s $boundary_error ]]; then
+        cat "$boundary_error" >&2
+    fi
+    error 1 "the module was not loaded because fresh-log capture is unavailable."
+fi
+
+# setsid keeps the insmod child out of the terminal's Ctrl+C process group.
+# The wrapper records ownership after setsid returns, then handles a pending
+# signal so EXIT cleanup can unload only a confirmed successful insertion.
+if setsid --wait insmod "$module_path" "pid=$pid" 2>"$insmod_error"; then
     module_owned=1
 else
     insmod_status=$?
+    drain_log_reader
     stop_log_reader
     normalize_log || true
 
@@ -230,12 +332,19 @@ else
     if [[ -s $insmod_error ]]; then
         cat "$insmod_error" >&2
     fi
+    if [[ -s $dmesg_error ]]; then
+        printf 'Kernel-log reader diagnostics:\n' >&2
+        cat "$dmesg_error" >&2
+    fi
     show_module_log >&2
     if grep -Fqi 'wrong symbol version' "$insmod_error"; then
         printf '%s\n' "Note: kmod may use this wording for an -ESRCH module-init error; check the vm_monitor kernel message above before diagnosing a version mismatch." >&2
     fi
     if [[ -e "/sys/module/$MODULE_NAME" ]]; then
         printf '%s\n' "The module appeared in /sys/module despite insmod failing; it was not removed because this invocation cannot confirm ownership." >&2
+    fi
+    if (( signal_status != 0 )); then
+        exit "$signal_status"
     fi
     exit 1
 fi
@@ -291,17 +400,6 @@ if ! vm_monitor_parse_snapshot "$normalized_log" "$pid"; then
     error 1 "the kernel snapshot could not be validated."
 fi
 
-process_name=$VM_PROCESS_NAME
-region_count=$VM_REGION_COUNT
-virtual_bytes_raw=$VM_VIRTUAL_BYTES
-minor_faults=$VM_MINOR_FAULTS
-major_faults=$VM_MAJOR_FAULTS
-
-if ! kib=$(awk -v bytes="$virtual_bytes_raw" 'BEGIN { printf "%.2f", bytes / 1024 }') ||
-    ! mib=$(awk -v bytes="$virtual_bytes_raw" 'BEGIN { printf "%.2f", bytes / 1048576 }'); then
-    error 1 "could not convert the virtual address size to binary units."
-fi
-
 check_for_signal
 if ! rmmod "$MODULE_NAME" 2>"$rmmod_error"; then
     printf 'Error: could not unload the %s module.\n' "$MODULE_NAME" >&2
@@ -313,18 +411,6 @@ fi
 module_owned=0
 check_for_signal
 
-printf '\n========================================\n'
-printf '        Virtual Memory Monitor\n'
-printf '========================================\n\n'
-printf 'Snapshot              : Kernel module initialization\n'
-printf 'Process ID            : %s\n' "$pid"
-printf 'Process Name          : %s\n\n' "$process_name"
-printf 'Memory Regions        : %s\n' "$region_count"
-printf 'Virtual Address Space : %s bytes\n' "$virtual_bytes_raw"
-printf '                        %s KiB\n' "$kib"
-printf '                        %s MiB\n\n' "$mib"
-printf 'Minor Page Faults     : %s (cumulative)\n' "$minor_faults"
-printf 'Major Page Faults     : %s (cumulative)\n\n' "$major_faults"
-printf '========================================\n'
-printf 'Status: Completed successfully\n'
-printf '========================================\n'
+if ! vm_monitor_format_summary "$pid"; then
+    error 1 "could not format the validated kernel snapshot."
+fi

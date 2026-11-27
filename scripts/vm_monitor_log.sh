@@ -101,3 +101,31 @@ vm_monitor_parse_snapshot()
 
     return 0
 }
+
+vm_monitor_format_summary()
+{
+    local pid=$1
+    local kib mib
+
+    if ! kib=$(awk -v bytes="$VM_VIRTUAL_BYTES" 'BEGIN { printf "%.2f", bytes / 1024 }') ||
+        ! mib=$(awk -v bytes="$VM_VIRTUAL_BYTES" 'BEGIN { printf "%.2f", bytes / 1048576 }'); then
+        printf 'Error: could not convert the virtual address size to binary units.\n' >&2
+        return 1
+    fi
+
+    printf '\n========================================\n'
+    printf '        Virtual Memory Monitor\n'
+    printf '========================================\n\n'
+    printf 'Snapshot              : Kernel module initialization\n'
+    printf 'Process ID            : %s\n' "$pid"
+    printf 'Process Name          : %s\n\n' "$VM_PROCESS_NAME"
+    printf 'Memory Regions        : %s\n' "$VM_REGION_COUNT"
+    printf 'Virtual Address Space : %s bytes\n' "$VM_VIRTUAL_BYTES"
+    printf '                        %s KiB\n' "$kib"
+    printf '                        %s MiB\n\n' "$mib"
+    printf 'Minor Page Faults     : %s (cumulative)\n' "$VM_MINOR_FAULTS"
+    printf 'Major Page Faults     : %s (cumulative)\n\n' "$VM_MAJOR_FAULTS"
+    printf '========================================\n'
+    printf 'Status: Completed successfully\n'
+    printf '========================================\n'
+}

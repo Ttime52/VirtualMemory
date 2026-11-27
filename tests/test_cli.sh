@@ -115,6 +115,12 @@ expect_value "parsed region count" "$VM_REGION_COUNT" "27"
 expect_value "parsed virtual bytes" "$VM_VIRTUAL_BYTES" "70881280"
 expect_value "parsed minor faults" "$VM_MINOR_FAULTS" "1375"
 expect_value "parsed major faults" "$VM_MAJOR_FAULTS" "0"
+vm_monitor_format_summary 4242 >"$tmp_dir/summary" || \
+    fail "complete output-format fixture did not reach the success summary"
+expect_text "formatted output" "$tmp_dir/summary" "Status: Completed successfully"
+expect_text "formatted output" "$tmp_dir/summary" "Virtual Address Space : 70881280 bytes"
+expect_text "formatted output" "$tmp_dir/summary" "69220.00 KiB"
+expect_text "formatted output" "$tmp_dir/summary" "67.60 MiB"
 printf 'PASS: timestamped records and extra module diagnostic\n'
 
 grep -Fv 'process major page faults' "$tmp_dir/kernel.normalized" >"$tmp_dir/missing.log"
