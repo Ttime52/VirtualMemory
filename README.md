@@ -1,10 +1,16 @@
 # VirtualMemory
 
-โปรเจกต์วิชา CPE333 Operating Systems สำหรับทดลองสร้าง Linux kernel module
-ที่เกี่ยวข้องกับการติดตามหน่วยความจำเสมือน (Virtual Memory)
+โปรเจกต์วิชา CPE333 Operating Systems สำหรับสร้าง Linux kernel module
+เพื่อติดตามข้อมูลหน่วยความจำเสมือนของ process ที่ระบุ PID
 
-ปัจจุบันโมดูลยังเป็นโครงเริ่มต้น: เมื่อโหลดหรือถอดโมดูล จะแสดงข้อความใน kernel log
-และยังไม่มีการเก็บหรือรายงานข้อมูลการใช้หน่วยความจำ
+โมดูลแสดงข้อมูล:
+
+- จำนวน memory regions
+- ขนาด virtual address space รวม หน่วยเป็น bytes
+- จำนวน minor page faults ของ process
+- จำนวน major page faults ของ process
+
+ข้อมูลจะแสดงใน kernel log เมื่อโหลดโมดูล
 
 ## ความต้องการ
 
@@ -25,25 +31,78 @@ sudo apt install build-essential linux-headers-$(uname -r)
 make -C kernel
 ```
 
-โหลดโมดูลและดูข้อความใน kernel log:
+โหลดโมดูลโดยระบุ PID ของ process ที่ต้องการตรวจ ตัวอย่างนี้ใช้ PID
+ของ shell ปัจจุบัน:
 
 ```bash
-sudo insmod kernel/vm_monitor.ko
-sudo dmesg | tail
+sudo insmod kernel/vm_monitor.ko pid=$$
+sudo dmesg | tail -n 10
 ```
 
-ถอดโมดูลและลบไฟล์ที่ build:
+ถอดโมดูลหลังตรวจข้อมูล:
 
 ```bash
 sudo rmmod vm_monitor
+```
+
+ลบไฟล์ที่เกิดจากการ build:
+
+```bash
 make -C kernel clean
 ```
 
 การโหลดและถอด kernel module ต้องใช้สิทธิ์ผู้ดูแลระบบ
 
+## สคริปต์ทดสอบ
+
+- `tests/thread_test.py` — สร้าง process ที่มี worker threads ทำงานอยู่
+- `tests/thread_exit_test.py` — ตรวจกรณี worker threads ทำงานจบแล้ว
+
 ## โครงสร้างโปรเจกต์
 
-- `kernel/vm_monitor.c` — จุดเริ่มต้นและจุดสิ้นสุดของโมดูล
-- `kernel/Makefile` — คำสั่ง build โมดูลด้วย kernel build system
-- `docs/environment.md` — รายละเอียดสภาพแวดล้อมที่ใช้พัฒนา
-- `scripts/`, `tests/` — พื้นที่สำหรับสคริปต์และการทดสอบในอนาคต
+- `kernel/vm_monitor.c` — โค้ด kernel module
+- `kernel/Makefile` — คำสั่ง build ด้วย kernel build system
+- `docs/environment.md` — รายละเอียดสภาพแวดล้อม
+- `docs/kernel-safety-review.md` — ผลตรวจความปลอดภัยและแผนทดสอบของ kernel module
+- `tests/` — สคริปต์สำหรับทดสอบ
+- `scripts/` — พื้นที่สำหรับสคริปต์เพิ่มเติม
+
+## CLI Usage
+
+Run this on Linux. You need Bash, `insmod`, `rmmod`, `dmesg` with `--follow-new` support, `flock`, `setsid`, `readlink`, `wc`, GCC, GNU Make, and headers for the running kernel. The wrapper needs root because it loads the kernel module and reads the kernel log. It is not intended to run directly on Windows.
+
+Build the module and request a snapshot:
+
+```sh
+make -C kernel
+./scripts/vm_monitor.sh --help
+sudo ./scripts/vm_monitor.sh 24097
+```
+
+Example output (the values vary by process and run):
+
+```text
+========================================
+        Virtual Memory Monitor
+========================================
+
+Snapshot              : Kernel module initialization
+Process ID            : 24097
+Process Name          : test_major
+
+Memory Regions        : 27
+Virtual Address Space : 70881280 bytes
+                        69220.00 KiB
+                        67.60 MiB
+
+Minor Page Faults     : 1375 (cumulative)
+Major Page Faults     : 0 (cumulative)
+
+========================================
+Status: Completed successfully
+========================================
+```
+
+The wrapper validates the PID, resolves the module relative to its own location, rejects a module that is already loaded, and reports useful errors for invalid input, missing module files, insertion failures, incomplete logs, and cleanup failures. It waits for `dmesg` to open the kernel log and consume a unique boundary marker written to `/dev/kmsg` before inserting the module. This adds one small marker record per run; the wrapper never clears the system log. A lock serializes wrapper instances, but does not coordinate with manual `insmod` or `rmmod` commands. The wrapper unloads only a module it successfully loaded and uses traps for best-effort cleanup after interruption or later errors. It does not use forced removal.
+
+All reported values come from the kernel module. The address size is shown in bytes and binary KiB/MiB. Page-fault counters are cumulative process totals at the module initialization snapshot, not faults caused only by the CLI. A process can change while it is being inspected; use a stable target for comparisons. See [tests/README.md](tests/README.md) for workload and `/proc` verification instructions.
