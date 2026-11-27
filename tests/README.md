@@ -131,3 +131,65 @@ On x86_64, `/proc/<pid>/maps` commonly includes a special `[vsyscall]` line at a
 - `test_vma` reserves a mapping without touching its pages, so it demonstrates VMA/address-space behavior, not resident-memory growth.
 - Fault counts are cumulative process counters outside the measured interval. Background runtime activity can add faults; use before/after differences and compare against `getrusage()` deltas.
 - Major faults depend on actual storage I/O, which user space cannot guarantee without disruptive cache controls. The test reports observations and does not claim success when the major counter does not increase.
+
+## CLI verification record
+
+Static checks run in Windows Git Bash on 2026-11-27:
+
+- `bash -n scripts/vm_monitor.sh` and `bash -n tests/test_cli.sh` — passed.
+- `bash tests/test_cli.sh` — passed help, missing PID, malformed/zero/negative/fractional/out-of-range PID, extra-argument, and invocation-from-another-directory checks.
+- The valid-PID privilege check was skipped because this was not a non-root Linux shell. No kernel module was loaded.
+
+Linux module integration is **Pending** Ubuntu VMware verification. In Ubuntu, run:
+
+```sh
+make -C kernel
+bash -n scripts/vm_monitor.sh
+bash -n tests/test_cli.sh
+chmod +x scripts/vm_monitor.sh
+./scripts/vm_monitor.sh --help
+bash tests/test_cli.sh
+
+sleep 300 &
+PID=$!
+sudo ./scripts/vm_monitor.sh "$PID"
+grep -E '^(Name|Threads|VmSize|VmRSS):' "/proc/$PID/status"
+cat "/proc/$PID/maps"
+python3 - "$PID" <<'PY'
+import sys
+
+pid = sys.argv[1]
+fields = open(f"/proc/{pid}/stat", encoding="ascii").read().strip()
+fields = fields[fields.rfind(")") + 2:].split()
+print("minflt (field 10):", fields[7])
+print("majflt (field 12):", fields[9])
+PY
+
+if lsmod | grep -q '^vm_monitor '; then
+    echo 'ERROR: vm_monitor is still loaded'
+else
+    echo 'PASS: vm_monitor was unloaded'
+fi
+kill "$PID"
+```
+
+Compare a snapshot taken while the target is stable. `/proc/<pid>/stat` fields 10 and 12 are cumulative minor and major faults; VMA counts can differ by the x86_64 `[vsyscall]` pseudo-mapping. The Linux integration scenarios (module insertion/removal, actual `/proc` comparisons, loaded-module preservation, locking, and interrupted cleanup) were not executed in this Windows session and must be verified in the VM.
+
+## CLI wrapper
+
+Build the module for the running kernel and take a snapshot of a target process with:
+
+```sh
+make -C kernel
+sudo ./scripts/vm_monitor.sh 24097
+```
+
+The wrapper resolves `kernel/vm_monitor.ko` relative to the repository, validates the PID and module kernel version, and requires root. It captures only new kernel-log records for its own module load, prints a formatted snapshot, and unloads the module only when this invocation loaded it. It refuses to run if `vm_monitor` is already loaded. A lock prevents two wrapper invocations from overlapping; manual `insmod` and `rmmod` commands do not use that lock. The wrapper does not clear the kernel log and does not read statistics from `/proc`.
+
+To run the non-destructive argument and help checks without loading a kernel module:
+
+```sh
+bash tests/test_cli.sh
+```
+
+For a successful snapshot, keep the target alive during the command. Fault counts remain cumulative counters captured once during module initialization.

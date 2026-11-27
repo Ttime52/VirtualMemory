@@ -66,3 +66,43 @@ make -C kernel clean
 - `docs/kernel-safety-review.md` — ผลตรวจความปลอดภัยและแผนทดสอบของ kernel module
 - `tests/` — สคริปต์สำหรับทดสอบ
 - `scripts/` — พื้นที่สำหรับสคริปต์เพิ่มเติม
+
+## CLI Usage
+
+Run this on Linux. You need Bash, `insmod`, `rmmod`, `dmesg` with `--follow-new` support, `flock`, GCC, GNU Make, and headers for the running kernel. The wrapper needs root because it loads the kernel module and reads the kernel log. It is not intended to run directly on Windows.
+
+Build the module and request a snapshot:
+
+```sh
+make -C kernel
+./scripts/vm_monitor.sh --help
+sudo ./scripts/vm_monitor.sh 24097
+```
+
+Example output (the values vary by process and run):
+
+```text
+========================================
+        Virtual Memory Monitor
+========================================
+
+Snapshot              : Kernel module initialization
+Process ID            : 24097
+Process Name          : test_major
+
+Memory Regions        : 27
+Virtual Address Space : 70881280 bytes
+                        69220.00 KiB
+                        67.60 MiB
+
+Minor Page Faults     : 1375 (cumulative)
+Major Page Faults     : 0 (cumulative)
+
+========================================
+Status: Completed successfully
+========================================
+```
+
+The wrapper validates the PID, resolves the module relative to its own location, rejects a module that is already loaded, and reports useful errors for invalid input, missing module files, insertion failures, incomplete logs, and cleanup failures. It captures only new kernel-log records; it never clears the system log. A lock serializes wrapper instances, but does not coordinate with manual `insmod` or `rmmod` commands. The wrapper unloads only a module it successfully loaded and uses traps for best-effort cleanup after interruption or later errors. It does not use forced removal.
+
+All reported values come from the kernel module. The address size is shown in bytes and binary KiB/MiB. Page-fault counters are cumulative process totals at the module initialization snapshot, not faults caused only by the CLI. A process can change while it is being inspected; use a stable target for comparisons. See [tests/README.md](tests/README.md) for workload and `/proc` verification instructions.
