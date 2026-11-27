@@ -103,7 +103,7 @@ These results provide baseline coverage for valid PIDs, multiple active threads,
 | SAFE-16 | Target without user `mm` | Source path returns `-EINVAL`; runtime pending. |
 | SAFE-17 | Thread-group leader exits while workers remain | Source path can return `-EINVAL` because the selected leader may have detached its `mm`; behavior is documented, runtime pending, and sibling-thread `mm` lookup is not implemented. |
 
-The added `tests/safety_test.sh` is deliberately limited to module parameter rejection, a valid-PID load, and five load/unload cycles. It refuses to run outside Linux, without root, without an explicit disposable-VM acknowledgement, against a mismatched `vermagic`, or if `vm_monitor` is already loaded. It does not replace the existing VMA, page-fault, or thread tests.
+The added `tests/safety_test.sh` is deliberately limited to module parameter rejection, a valid-PID load, and five load/unload cycles. It refuses to run outside Linux, without root, without an explicit disposable-VM acknowledgement, against a mismatched `vermagic`, or if `vm_monitor` is already loaded. The safety test marks the module as owned only after its own `insmod` succeeds; if a failed insertion is followed by a loaded module, it reports the unexpected state and leaves that module untouched. It does not replace the existing VMA, page-fault, or thread tests.
 
 ## 9. Build and manual verification
 

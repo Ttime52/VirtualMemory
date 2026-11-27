@@ -59,8 +59,10 @@ expect_rejected()
     fi
 
     if module_loaded; then
-        owned_module=1
-        fail "$label failed but left $module_name loaded"
+        # A failed insmod does not prove that this test loaded the module.
+        # It may have appeared due to an external/manual insertion, so leave
+        # it untouched and let the operator resolve the unexpected state.
+        fail "$label failed and $module_name is present; ownership is unknown, leaving it loaded"
     fi
 
     printf 'PASS: %s rejected; module is not loaded\n' "$label"
