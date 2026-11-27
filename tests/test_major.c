@@ -66,7 +66,7 @@ static int write_all(int fd, const unsigned char *buffer, size_t length)
 
 int main(void)
 {
-    char path[] = "/tmp/vm-major-XXXXXX";
+    char path[] = "./vm-major-XXXXXX";
     unsigned char buffer[WRITE_BUFFER_SIZE];
     volatile const unsigned char *mapping = NULL;
     struct rusage before;
