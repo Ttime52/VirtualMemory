@@ -100,9 +100,28 @@ A major fault increase is evidence that file-backed reads required storage I/O d
 
 ## Comparing with the kernel module
 
-When a module version that supports process snapshots is available, capture its snapshot while the target program is stopped at each pause, using that version's documented PID input and trigger. Compare its reported VMA count and address-space size with `/proc/<pid>/maps` and the `VmSize` value in `/proc/<pid>/status`. Compare its minor/major counters with fields 10 and 12 of `/proc/<pid>/stat` and with the test program's `getrusage(RUSAGE_SELF)` deltas. Keep in mind that `getrusage()` deltas cover only the interval around the deliberate accesses, while `/proc/<pid>/stat` and a module snapshot generally show cumulative process counters.
+This checkout accepts a PID through the read-only `pid` module parameter and prints one snapshot during module initialization. While a test program is paused, load the module from another terminal:
 
-**Checkout limitation:** the `kernel/vm_monitor.c` currently in this repository only logs module load and unload messages. It contains no PID input, process lookup, snapshot trigger, or statistics output format. Therefore, this checkout cannot perform a direct module-to-`/proc` comparison until that interface exists; the programs and `/proc` verification can still be used independently. No kernel module source is changed by these tests.
+```sh
+sudo insmod kernel/vm_monitor.ko pid="$PID"
+sudo dmesg | tail -n 10
+sudo rmmod vm_monitor
+```
+
+The module logs the target PID and process name, VMA count, total bytes across normal VMAs, and process minor/major page-fault counters. Compare the VMA count and byte sum with `/proc/<pid>/maps`, virtual size with `VmSize` in `/proc/<pid>/status`, and fault counts with fields 10 and 12 of `/proc/<pid>/stat`. Keep the target paused during each snapshot where possible. The `getrusage()` values in the minor and major programs are deltas over their deliberate-access intervals; module and procfs values are cumulative.
+
+The kernel module source is unchanged by these user-space tests. The safety review and the module's current PID/error behavior are documented in `docs/kernel-safety-review.md`.
+
+## Module parameter and lifecycle checks
+
+In a disposable Ubuntu VM, first build the module for the running kernel, then run the bounded safety checks as root:
+
+```sh
+make -C kernel
+sudo env VM_SAFETY_ACK=YES sh tests/safety_test.sh kernel/vm_monitor.ko
+```
+
+The script requires an explicit disposable-VM acknowledgement, verifies a valid PID load, five load/unload cycles, rejection of missing or invalid PID values, and that rejected loads do not leave the module present in `/sys/module`. It refuses to run if the module is already loaded or the module's `vermagic` does not match the running kernel. Review recent `vm_monitor:` messages with `sudo dmesg | tail -n 100`; do not clear the kernel log.
 
 On x86_64, `/proc/<pid>/maps` commonly includes a special `[vsyscall]` line at a fixed high address. It is a legacy special mapping and should be treated separately from ordinary VMAs when comparing counts or address-space totals. In particular, do not assume that a line count from `maps`, an `mm` VMA count, and a module's chosen virtual-size definition include this special region in the same way.
 

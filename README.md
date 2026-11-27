@@ -63,5 +63,6 @@ make -C kernel clean
 - `kernel/vm_monitor.c` — โค้ด kernel module
 - `kernel/Makefile` — คำสั่ง build ด้วย kernel build system
 - `docs/environment.md` — รายละเอียดสภาพแวดล้อม
+- `docs/kernel-safety-review.md` — ผลตรวจความปลอดภัยและแผนทดสอบของ kernel module
 - `tests/` — สคริปต์สำหรับทดสอบ
 - `scripts/` — พื้นที่สำหรับสคริปต์เพิ่มเติม

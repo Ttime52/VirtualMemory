@@ -20,6 +20,7 @@ static int __init vm_monitor_init(void)
     struct task_struct *task;
     struct mm_struct *mm;
     struct vm_area_struct *vma;
+    char process_name[TASK_COMM_LEN];
     unsigned long region_count = 0;
     unsigned long long total_bytes = 0;
     unsigned long minor_faults;
@@ -88,8 +89,10 @@ static int __init vm_monitor_init(void)
 
     mmap_read_unlock(mm);
 
+    get_task_comm(process_name, task);
+
     pr_info("vm_monitor: target PID = %d, process name = %s\n",
-            pid, task->comm);
+            pid, process_name);
     pr_info("vm_monitor: number of memory regions = %lu\n",
             region_count);
     pr_info("vm_monitor: total virtual address space = %llu bytes\n",
