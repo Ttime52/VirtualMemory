@@ -10,7 +10,11 @@
 - จำนวน minor page faults ของ process
 - จำนวน major page faults ของ process
 
-ข้อมูลจะแสดงใน kernel log เมื่อโหลดโมดูล
+ดูผลได้ 3 ทาง:
+
+- `/proc/vm_monitor` — เขียน PID แล้ว `cat` ดูสรุปได้ซ้ำ ๆ โดยไม่ต้องโหลดโมดูลใหม่
+- `scripts/vm_monitor.sh <PID>` — CLI ที่โหลดโมดูล แสดงผล และถอดโมดูลให้
+- ระบุ `pid=` ตอนโหลดโมดูล แล้วดูใน kernel log
 
 ## ความต้องการ
 
@@ -53,10 +57,44 @@ make -C kernel clean
 
 การโหลดและถอด kernel module ต้องใช้สิทธิ์ผู้ดูแลระบบ
 
+## ใช้งานผ่าน /proc/vm_monitor
+
+โหลดโมดูลโดยไม่ต้องระบุ PID แล้วเขียน PID ที่ต้องการตรวจลงใน `/proc/vm_monitor`:
+
+```bash
+sudo insmod kernel/vm_monitor.ko
+echo $$ | sudo tee /proc/vm_monitor
+cat /proc/vm_monitor
+```
+
+ตัวอย่างผล:
+
+```text
+===== Virtual Memory Summary =====
+PID                         : 104 (vmtest)
+Number of memory regions    : 12
+Total virtual address space : 68145152 bytes (66548 KiB)
+Minor page faults (total)   : 16440
+Major page faults (total)   : 0
+---- since PID was set ----
+Minor page faults           : 16384
+Major page faults           : 0
+```
+
+- **total** คือยอดสะสมตั้งแต่ process เริ่มทำงาน (เทียบได้กับ field 10 และ 12 ของ `/proc/<pid>/stat`)
+- **since PID was set** คือจำนวนที่เพิ่มขึ้นตั้งแต่เขียน PID
+- `cat` ซ้ำได้ ค่าจะอ่านใหม่ทุกครั้ง และเปลี่ยน PID ได้โดยเขียน PID ใหม่
+- PID ที่ไม่มีอยู่หรือไม่ถูกต้องจะถูกปฏิเสธ (`No such process` หรือ `Invalid argument`)
+- ถ้า process จบไปแล้ว หรือ PID ถูกนำไปใช้กับ process อื่น จะแจ้งให้ทราบแทนการแสดงค่าผิด
+- ถ้าระบุ `pid=` ตอนโหลด ต้องเป็น PID ที่ถูกต้อง (`pid=-1`, `0` หรือ PID ที่ไม่มีอยู่จะทำให้โหลดไม่สำเร็จเหมือนเดิม)
+- ถอดโมดูลด้วย `sudo rmmod vm_monitor` ก่อนใช้ CLI เพราะ CLI จะไม่ทำงานถ้าโมดูลโหลดค้างอยู่
+
 ## สคริปต์ทดสอบ
 
 - `tests/thread_test.py` — สร้าง process ที่มี worker threads ทำงานอยู่
 - `tests/thread_exit_test.py` — ตรวจกรณี worker threads ทำงานจบแล้ว
+- `tests/test_vma.c`, `tests/test_minor.c`, `tests/test_major.c` — โปรแกรมสร้าง VMA, minor fault และ major fault (ดู `tests/README.md`)
+- `scripts/run_page_fault_tests.sh` — รันโปรแกรมทดสอบทั้งสามคู่กับโมดูล เทียบกับ `/proc` และบันทึกผลเป็น `tests/results-<วันเวลา>.md`
 
 ## โครงสร้างโปรเจกต์
 
@@ -64,6 +102,8 @@ make -C kernel clean
 - `kernel/Makefile` — คำสั่ง build ด้วย kernel build system
 - `docs/environment.md` — รายละเอียดสภาพแวดล้อม
 - `docs/kernel-safety-review.md` — ผลตรวจความปลอดภัยและแผนทดสอบของ kernel module
+- `docs/page-faults.md` — ความรู้เรื่อง page fault, tracepoint และเหตุผลของการออกแบบ
+- `docs/testing/test-results-utm.md` — ผลทดสอบบน UTM
 - `tests/` — สคริปต์สำหรับทดสอบ
 - `scripts/` — พื้นที่สำหรับสคริปต์เพิ่มเติม
 

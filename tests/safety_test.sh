@@ -84,7 +84,20 @@ while [ "$iteration" -le 5 ]; do
     iteration=$((iteration + 1))
 done
 
-expect_rejected "missing PID"
+# Without pid=, the module loads in /proc mode and waits for a PID written
+# to /proc/vm_monitor. It must report "No PID" and unload cleanly.
+insmod "$module" || fail "load without pid= failed"
+owned_module=1
+module_loaded || fail "load without pid= did not appear in /sys/module"
+[ -r /proc/vm_monitor ] || fail "/proc/vm_monitor was not created"
+grep -q "No PID is being monitored" /proc/vm_monitor || \
+    fail "/proc/vm_monitor did not report the idle state"
+rmmod "$module_name" || fail "rmmod failed after load without pid="
+owned_module=0
+[ ! -e /proc/vm_monitor ] || fail "/proc/vm_monitor remained after rmmod"
+printf 'PASS: load without pid= creates and removes /proc/vm_monitor\n'
+
+expect_rejected "explicit PID -1" "pid=-1"
 expect_rejected "PID zero" "pid=0"
 expect_rejected "negative PID" "pid=-7"
 expect_rejected "non-numeric PID" "pid=not-a-number"

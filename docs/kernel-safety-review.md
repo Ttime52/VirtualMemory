@@ -24,7 +24,7 @@ No high- or critical-severity defect was confirmed by source review. Runtime saf
 
 ### Initial input and error review
 
-`pid` is an integer module parameter with mode `0444`, defaulting to `-1`. Missing, zero, and negative values that fit in `int` reach `vm_monitor_init()` and return `-EINVAL` after a `vm_monitor:` error message. Nonnumeric and out-of-range values can be rejected by the module-parameter parser before the initializer runs, so they may have no module-specific kernel log. A nonexistent PID is rejected with `-ESRCH`. A target for which `get_task_mm()` returns `NULL` is rejected with `-EINVAL`.
+`pid` is an integer module parameter with mode `0444`, defaulting to `-1`. If `pid=` is omitted, the module loads without a target and waits for a PID written to `/proc/vm_monitor` (added after this review). An explicitly supplied zero or negative value, including `pid=-1`, reaches `vm_monitor_init()` and returns `-EINVAL` after a `vm_monitor:` error message. Nonnumeric and out-of-range values can be rejected by the module-parameter parser before the initializer runs, so they may have no module-specific kernel log. A nonexistent PID is rejected with `-ESRCH`. A target for which `get_task_mm()` returns `NULL` is rejected with `-EINVAL`.
 
 The “wrong symbol version” message is a kmod userspace string mapping: kmod's `insmod` maps `ESRCH` to that text. It does not establish that symbol versions were mismatched. In the reported case, the kernel's `PID 99999999 was not found` message and the initializer's `-ESRCH` identify the actual cause. No error code change is warranted.
 
@@ -86,7 +86,7 @@ These results provide baseline coverage for valid PIDs, multiple active threads,
 | Test | Scenario | Review status |
 |---|---|---|
 | SAFE-01 | Valid PID | Prior valid-PID tests recorded; not rerun here. |
-| SAFE-02 | Missing PID parameter | Source review: default `-1` is rejected. Runtime not recorded; pending. |
+| SAFE-02 | Missing PID parameter | Changed by the `/proc/vm_monitor` interface: the module loads in idle mode; `tests/safety_test.sh` checks that `/proc/vm_monitor` is created and removed. |
 | SAFE-03 | PID zero | Source review: rejected with `-EINVAL`. Runtime pending. |
 | SAFE-04 | Negative PID | PID `-1` rejection is recorded; other negative values pending. |
 | SAFE-05 | Nonnumeric PID | Parser should reject before module init; runtime pending. |
@@ -150,7 +150,7 @@ sudo rmmod vm_monitor
 wait "$target" 2>/dev/null || true
 ```
 
-The parameter test script covers missing, zero, negative, nonnumeric, out-of-range, and nonexistent PIDs. For a process with no user `mm`, first confirm that PID 2 is `kthreadd` in the VM (`cat /proc/2/comm`), then try `sudo insmod kernel/vm_monitor.ko pid=2`; it should fail with the no-user-address-space kernel log and leave the module absent from `lsmod`.
+The parameter test script covers loading without `pid=` (idle `/proc` mode), zero, negative (including explicit `-1`), nonnumeric, out-of-range, and nonexistent PIDs. For a process with no user `mm`, first confirm that PID 2 is `kthreadd` in the VM (`cat /proc/2/comm`), then try `sudo insmod kernel/vm_monitor.ko pid=2`; it should fail with the no-user-address-space kernel log and leave the module absent from `lsmod`.
 
 For SAFE-08, repeat a short-lived target race a bounded number of times:
 
