@@ -38,6 +38,12 @@ The “wrong symbol version” message is a kmod userspace string mapping: kmod'
 
 If the task exits before `get_pid_task()`, lookup can fail cleanly. If it exits after a task reference is obtained, that reference keeps the `task_struct` alive. The `mm` reference and read lock keep the selected address space valid through iteration. An exiting task can already have detached its address space, in which case `get_task_mm()` returns `NULL` and the task reference is released. These references prevent use-after-free; they do not freeze the target or guarantee that all metrics represent the same instant.
 
+### Thread-group leader exits before its workers
+
+The PID lookup selects the task associated with that PID, and the module calls `get_task_mm()` on that selected task. If a program's main thread exits with `pthread_exit()` while worker threads continue, the thread-group leader can have detached its `mm_struct` even though a surviving worker still uses the shared address space. In that case `get_task_mm(leader)` can return `NULL`; the current module safely releases the task reference and reports that the PID has no accessible user address space instead of taking a snapshot from a sibling thread.
+
+This is a coverage limitation, not a use-after-free: the module does not currently search the remaining thread group for a task that still owns the shared address space. If snapshots must remain available after the leader exits, that behavior needs a separately reviewed kernel change that obtains an `mm` reference from a surviving thread with appropriate task/thread lifetime protection. The current user-space thread tests do not exercise this leader-exits-first case.
+
 Every acquired PID, task, and `mm` reference has one matching release on the current success and error paths. No dynamic module-owned allocation or persistent registration is made. A failed initializer returns its negative errno after releasing acquired references; no successful module instance remains to be removed.
 
 ## 5. VMA iteration and locking
@@ -95,6 +101,7 @@ These results provide baseline coverage for valid PIDs, multiple active threads,
 | SAFE-14 | Cleanup after failed initialization | Source paths reviewed; parameter test checks unloaded state. Runtime pending. |
 | SAFE-15 | All four metric regressions | Prior results recorded; VMA map-count comparison exists for one run. Not rerun here. |
 | SAFE-16 | Target without user `mm` | Source path returns `-EINVAL`; runtime pending. |
+| SAFE-17 | Thread-group leader exits while workers remain | Source path can return `-EINVAL` because the selected leader may have detached its `mm`; behavior is documented, runtime pending, and sibling-thread `mm` lookup is not implemented. |
 
 The added `tests/safety_test.sh` is deliberately limited to module parameter rejection, a valid-PID load, and five load/unload cycles. It refuses to run outside Linux, without root, without an explicit disposable-VM acknowledgement, against a mismatched `vermagic`, or if `vm_monitor` is already loaded. It does not replace the existing VMA, page-fault, or thread tests.
 
@@ -224,6 +231,7 @@ Runtime testing was not available in this Windows session. WSL distribution enum
 - [x] PID validation, error paths, lifetime references, VMA lock, fault aggregation, RCU, logging, and lifecycle reviewed.
 - [x] Task name copied through the kernel helper without changing log format.
 - [x] The `-ESRCH`/kmod diagnostic mapping and parameter-parser behavior documented.
+- [x] The leader-exits-before-workers behavior and current no-sibling-`mm` limitation documented.
 - [x] Existing VMA, page-fault, and thread tests reused; a separate bounded parameter/lifecycle test added.
 - [x] Safety review document created with recorded historical results and pending cases.
 - [ ] Build against Linux 7.0.0-30-generic — pending.
