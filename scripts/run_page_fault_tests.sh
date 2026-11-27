@@ -217,12 +217,9 @@ say "## 3. test_major (major page faults)"
 start_prog "$ROOT/tests/test_major"
 table_header
 wait_for "Before scanning the mapping" || exit 1
-# ล้าง page cache ทั้งระบบ เพื่อบังคับให้อ่านไฟล์จาก disk จริง (ให้เกิด major fault)
-sync
-if [ "$DRY" != "1" ]; then
-    echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-fi
-snapshot "ก่อนอ่านไฟล์ (หลัง drop_caches)"
+# ไม่ใช้ drop_caches: test_major ไล่ไฟล์ออกจาก page cache เองด้วย
+# posix_fadvise(DONTNEED) บนไฟล์ในโฟลเดอร์ปัจจุบัน (ext4) ตาม PR #6
+snapshot "ก่อนอ่านไฟล์"
 B_MAJ=$S_MAJ
 press_enter
 wait_for "After scanning" && snapshot "หลังอ่านไฟล์ทุก page"
