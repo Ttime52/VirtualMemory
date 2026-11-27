@@ -88,15 +88,28 @@ Compare the `stat` values before and after the scan, or compare their difference
 
 ### File-backed access and major faults
 
-Terminal 1:
+#### File system requirement
+
+`test_major` creates a temporary 64 MiB file named `vm-major-*` in the current working directory. Run it from a disk-backed file system such as ext4, not a memory-backed file system such as tmpfs. Some Ubuntu installations mount `/tmp` as tmpfs; running there can leave file data in memory and produce minor faults instead of major faults.
+
+From the repository root, check the file system:
 
 ```sh
+findmnt -T .
+```
+
+Check the `FSTYPE` column. It should identify a disk-backed file system such as ext4; if it reports `tmpfs`, run the test from a directory on disk-backed storage instead.
+
+Build and run the test from the repository root:
+
+```sh
+make -C tests
 ./tests/test_major
 ```
 
-The program writes and syncs its 64 MiB temporary file, maps it, and requests `POSIX_FADV_DONTNEED` plus `MADV_RANDOM` as best-effort hints. At its first pause, take a baseline. Continue to scan the file and compare the reported deltas with `/proc/<pid>/stat` at the second pause using the Python command above.
+The temporary file is removed during normal program cleanup. The project `.gitignore` excludes files matching `vm-major-*`. At the first pause, record a baseline; continue to scan the file and compare the reported deltas with fields 10 and 12 of `/proc/<pid>/stat` at the second pause. When taking a module snapshot, keep the process paused and compare the module's cumulative counters with those same `/proc` fields.
 
-A major fault increase is evidence that file-backed reads required storage I/O during this run. If the program reports zero major faults, treat the run as not having demonstrated major faults. The file may have stayed in the page cache, the filesystem or virtualized storage may satisfy reads from cache, or the kernel may not honor the advisory eviction hint. The test intentionally does not flush global caches, use `drop_caches`, or increase the file until it consumes excessive resources. Repeated runs can produce different counts.
+The program writes and syncs its 64 MiB file, maps it, and requests `POSIX_FADV_DONTNEED` plus `MADV_RANDOM` as best-effort hints. **Cache eviction is not guaranteed.** Even on a disk-backed file system, the file may remain in the page cache or virtualized storage may satisfy reads from cache. If the major fault counter does not increase, record that the run did not demonstrate major faults. The test does not flush global caches or use `drop_caches`; results can vary between runs.
 
 ## Comparing with the kernel module
 
